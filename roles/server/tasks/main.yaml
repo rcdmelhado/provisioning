@@ -1,0 +1,178 @@
+---
+- name: Create directory /media/storage
+  file:
+    path: /media/storage
+    state: directory
+    owner: '{{ username }}'
+    group: '{{ username }}'
+    mode: '0644'
+  become: yes
+
+- name: Create directory /home/{{ username }}/temp
+  file:
+    path: /home/{{ username }}/temp
+    state: directory
+    owner: '{{ username }}'
+    group: '{{ username }}'
+    mode: '0644'
+  become: yes
+
+# - name: Create and activate mount /dev/sdb2 to /media/storage
+#   mount:
+#     path: /media/storage
+#     src: /dev/sdb2
+#     fstype: ext4
+#     passno: '2'
+#     state: mounted
+#     backup: yes
+#   become: yes
+
+- name: Install packages
+  apt:
+    name:
+      - vim
+      - nmap
+      - htop
+      - nethogs
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - make
+      - build-essential
+      - libssl-dev
+      - zlib1g-dev
+      - libbz2-dev 
+      - libreadline-dev
+      - libsqlite3-dev
+      - wget
+      - curl
+      - llvm 
+      - libncurses5-dev
+      - libncursesw5-dev
+      - xz-utils
+      - tk-dev
+      - python3-mysqldb
+      - python3.8-dev
+    state: latest
+    update_cache: yes
+  become: yes
+
+- name: Check if Docker is installed
+  command: docker
+  register: docker_installed
+  ignore_errors: yes
+
+- name: Download Docker GPG key
+  get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /home/{{ username }}/temp/gpg
+  become: yes
+  when: docker_installed.rc != 0
+
+- name: Add Docker GPG key
+  command: "gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg /home/{{ username }}/temp/gpg"
+  become: yes
+  when: docker_installed.rc != 0
+
+- name: Get release version
+  command: lsb_release -cs
+  register: release_version
+  when: docker_installed.rc != 0
+
+- name: Set up docker stable repo
+  lineinfile:
+    path: /etc/apt/sources.list.d/docker.list
+    state: present
+    line: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu {{ release_version.stdout }} stable"
+    create: yes
+    mode: '644'
+  become: yes
+  when: docker_installed.rc != 0
+
+- name: Update packages 
+  apt:
+    state: latest
+    update_cache: yes
+  become: yes
+
+- name: Install packages from new repos
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+    state: latest
+    update_cache: yes
+  become: yes
+  when: docker_installed.rc != 0
+
+- name: Start and enable docker service
+  service:
+    name: docker
+    state: started
+    enabled: yes
+  become: yes
+
+- name: Adding user to docker group
+  user:
+    name: '{{ username }}'
+    groups:
+      - docker
+    append: yes
+  become: yes
+
+- name: Check Python {{ python_version }} installed
+  command: "python{{ python_major_version }} --version"
+  register: installed_python_version
+  ignore_errors: yes
+
+- name: Download Python
+  get_url:
+    url: https://www.python.org/ftp/python/{{ python_version }}/Python-{{ python_version }}.tgz
+    dest: /home/{{ username }}/temp/Python-{{ python_version }}.tgz
+  become: yes
+  when: installed_python_version.rc != 0 or installed_python_version.stdout != python_version
+
+- name: Extract Python
+  ansible.builtin.unarchive:
+    src: /home/{{ username }}/temp/Python-{{ python_version }}.tgz
+    dest: /home/{{ username }}/temp
+    remote_src: yes
+  become: yes
+  when: installed_python_version.rc != 0 or installed_python_version.stdout != python_version
+
+- name: Configure Python
+  command: './configure --enable-optimizations --with-ensurepip=install'
+  args:
+    chdir: '/home/{{ username }}/temp/Python-{{ python_version }}'
+  become: yes
+  when: installed_python_version.rc != 0 or installed_python_version.stdout != python_version
+
+- name: Build Python
+  make:
+    chdir: '/home/{{ username }}/temp/Python-{{ python_version }}'
+    params:
+      NUM_THREADS: 2
+  become: yes
+  when: installed_python_version.rc != 0 or installed_python_version.stdout != python_version
+
+- name: Altinstall Python
+  command: 'make altinstall'
+  args:
+    chdir: '/home/{{ username }}/temp/Python-{{ python_version }}'
+  become: yes
+  when: installed_python_version.rc != 0 or installed_python_version.stdout != python_version
+
+- name: Delete temp directory
+  file:
+    state: absent
+    path: '/home/{{ username }}/temp'
+  become: yes
+
+- name: Install node with option --classic
+  community.general.snap:
+    name: node
+    classic: yes
+  become: yes
